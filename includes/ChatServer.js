@@ -7,30 +7,56 @@ var ChatRoom = require("./ChatRoom.js").ChatRoom;
  * @constructor
  */
 function ChatServer() {
+  /**
+   * All connected clients of this server
+   * @type Object
+   */
+  this.clients = {};
+
+  /**
+   * All Rooms of this server
+   * @type Object
+   */
+  this.rooms = {};
+
+  /**
+   * Autoincrement value for room creation
+   * @type {number}
+   * @private
+   */
+  this._roomAutoIncrement = 0;
+
+  /**
+   * Interval function handler
+   * @type {null}
+   * @private
+   */
+  this._interval = null;
+
+
   var server = this;
   this.setInterval( 1000, function() {
-    console.log( "Clients: " + Object.keys(server.clients).length + " | Rooms: " + Object.keys(server.rooms).length );
+    //console.log( "Clients: " + Object.keys(server.clients).length + " | Rooms: " + Object.keys(server.rooms).length );
   } );
 
   this.on( "userMessageReceived", this.userMessageReceived );
+  this.on( "roomMessageReceived", this.roomMessageReceived );
   this.on( "netMessageReceived", this.netMessageReceived );
 
   this.addRoom( "default", "public" );
+  this.addRoom( "cool", "public" );
 }
 
 util.inherits(ChatServer, events.EventEmitter);
 
-/**
- * All connected clients of this server
- * @type Object
- */
-ChatServer.prototype.clients = {};
 
 /**
- * All Rooms of this server
- * @type Object
+ * Returns a unique room number for room creation
+ * @returns {number}
  */
-ChatServer.prototype.rooms = [];
+ChatServer.prototype.getNextRoomId = function() {
+  return this._roomAutoIncrement++;
+}
 
 // Protocol ---------------------------------------------------------------------------------------
 
@@ -43,13 +69,24 @@ ChatServer.prototype.userMessageReceived = function( socket, data ) {
   console.log("user message received: " + socket.remotePort);
 
   switch( data.action ) {
+    case 'user.join.room':
+      if( this.rooms.hasOwnProperty(data.room)) {
+        this.rooms[ data.room ].addClient( socket );
+      }
+      break;
+
+    case 'user.leave.room':
+      if( this.rooms.hasOwnProperty(data.room)) {
+        this.rooms[ data.room ].removeClient( socket );
+      }
+      break;
+
     case 'user.data':
       socket.name = data.username
       break;
 
-
     case 'user.msg':
-      if( typeof this.rooms[ data.to ] != 'undefined' ) {
+      if( this.rooms.hasOwnProperty( data.to ) ) {
         var client = this.clients[ socket.remotePort ];
 
         var msg = {
@@ -78,6 +115,18 @@ ChatServer.prototype.userMessageReceived = function( socket, data ) {
  */
 ChatServer.prototype.roomMessageReceived = function( socket, data ) {
   console.log("room message received: " + socket.remotePort);
+
+  switch( data.action ) {
+    case 'room.list':
+      var msg = {
+        action: 'room.list',
+        rooms: this.rooms
+      };
+
+      this.sendToClient( socket, msg );
+
+      break;
+  }
 };
 
 /**
@@ -97,8 +146,8 @@ ChatServer.prototype.netMessageReceived = function( socket, data ) {
  * @param id
  */
 ChatServer.prototype.removeRoom = function( id ) {
-  if( typeof this.rooms[ id ] != 'undefined' ) {
-    this.rooms.slice( id, 1 );
+  if( this.rooms.hasOwnProperty( id ) ) {
+    delete this.rooms[id];
   }
 }
 
@@ -109,9 +158,11 @@ ChatServer.prototype.removeRoom = function( id ) {
  * @returns {Number}
  */
 ChatServer.prototype.addRoom = function( name, type ) {
-  this.rooms[ this.rooms.length ] = new ChatRoom( this.rooms.length, name, type );
+  var index = this.getNextRoomId();
 
-  return this.rooms.length-1;
+  this.rooms[ index ] = new ChatRoom( index, name, type, this );
+
+  return index;
 }
 
 /**
@@ -132,7 +183,7 @@ ChatServer.prototype.addClient = function( webSocket ) {
   this.clients[webSocket._socket.remotePort] = webSocket;
   webSocket.remotePort = webSocket._socket.remotePort;
 
-  this.rooms[0].addClient( webSocket.remotePort );
+  this.rooms[0].addClient( webSocket );
 
   var server = this;
   
@@ -204,8 +255,8 @@ ChatServer.prototype.addClient = function( webSocket ) {
  * @param sender Object Sender
  */
 ChatServer.prototype.sendToRoom = function( room, data, sender ) {
-  for( var i=0; i<room.clients.length; i++ ) {
-    var ws = this.clients[ room.clients[i] ];
+  for( var remotePort in room.clients ) {
+    var ws = room.clients[ remotePort ];
     if( ws ) {
       this.sendToClient( ws, data );
     } else {
@@ -239,8 +290,6 @@ ChatServer.prototype.generateInfoMessage = function( type, id, msg ) {
 }
 
 // Interval ----------------------------------------------------------------------------------
-ChatServer.prototype._interval = null;
-
 /**
  * Sets an interval function for ongoing actions
  * @param duration int

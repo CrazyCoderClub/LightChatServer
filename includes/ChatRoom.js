@@ -1,41 +1,30 @@
-function ChatRoom( id, server, type ) {
+function ChatRoom( id, name, type, server ) {
   this.id = id;
+  this.name = name;
   this.server = server;
   this.type = type;
+  this.clients = {};
 }
 
-ChatRoom.prototype.id = -1;
-ChatRoom.prototype.name = "default";
-ChatRoom.prototype.type = "private";
-ChatRoom.prototype.server = null;
-ChatRoom.prototype.clients = [];
-
-ChatRoom.prototype.addClient = function( clientID ) {
-  this.clients[ this.clients.length ] = clientID;
+ChatRoom.prototype.addClient = function( client ) {
+  if( !this.clients.hasOwnProperty( client.remotePort ) ) {
+    this.clients[ client.remotePort ] = client;
+  }
 };
 
-ChatRoom.prototype.removeClient = function( clientID ) {
-  var index = -1;
-  for( var i=0; i<this.clients.length; i++ ) {
-    if( this.clients[i] == clientID ) {
-      index = i;
-      break;
-    }
-  }
-
-  if( index != -1 ) {
-    this.clients.slice( index, 1 );
+ChatRoom.prototype.removeClient = function( client ) {
+  if( this.clients.hasOwnProperty( client.remotePort ) ) {
+    delete this.clients[ client.remotePort ];
   }
 };
 
 ChatRoom.prototype.update = function() {
-  for( var i =0; i < this.clients.length; i++ ) {
-    if( !this.server.clients.hasOwnProperty( this.clients[i] ) ) {
-      this.clients.slice( i, 1 );
-      i--;
+  for( var remotePort in this.clients ) {
+    var client = this.clients[ remotePort ];
+    if( !this.server.clients.hasOwnProperty( client.remotePort ) ) {
+      this.removeClient( client );
     }
   }
 }
-
 
 module.exports.ChatRoom = ChatRoom;
