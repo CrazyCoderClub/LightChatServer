@@ -27,12 +27,18 @@ function ChatServer() {
   this._roomAutoIncrement = 0;
 
   /**
+   * Autoincrement value for meesage id
+   * @type {number}
+   * @private
+   */
+  this._msgAutoIncrement = 0;
+
+  /**
    * Interval function handler
    * @type {null}
    * @private
    */
   this._interval = null;
-
 
   var server = this;
   this.setInterval( 1000, function() {
@@ -43,8 +49,11 @@ function ChatServer() {
   this.on( "roomMessageReceived", this.roomMessageReceived );
   this.on( "netMessageReceived", this.netMessageReceived );
 
-  this.addRoom( "default", "public" );
-  this.addRoom( "cool", "public" );
+  this.on( "sendToClient", this.sendToClient );
+
+  // Add default rooms
+  this.addRoom( new ChatRoom( this.getNextRoomId(), "default", "public", this ) );
+  this.addRoom( new ChatRoom( this.getNextRoomId(), "cool", "public", this ) );
 }
 
 util.inherits(ChatServer, events.EventEmitter);
@@ -56,6 +65,14 @@ util.inherits(ChatServer, events.EventEmitter);
  */
 ChatServer.prototype.getNextRoomId = function() {
   return this._roomAutoIncrement++;
+}
+
+/**
+ * Returns a unique room number for room creation
+ * @returns {number}
+ */
+ChatServer.prototype.getNextMsgId = function() {
+  return this._msgAutoIncrement++;
 }
 
 // Protocol ---------------------------------------------------------------------------------------
@@ -94,14 +111,17 @@ ChatServer.prototype.userMessageReceived = function( socket, data ) {
           mine: 'text/plain',
           data: data.msg,
           from: client.name,
-          to: data.to
+          to: data.to,
+          id: this.getNextMsgId(),
+          num: 1,
+          all: 1
         };
 
         this.sendToRoom( this.rooms[ data.to ], msg, socket );
 
       } else {
         var msg = this.generateInfoMessage( "warning", 4001, "Invalid message target" );
-        this.sendToClient( socket, msg );
+        this.emit("sendToClient", socket, msg);
       }
 
       break;
@@ -123,7 +143,23 @@ ChatServer.prototype.roomMessageReceived = function( socket, data ) {
         rooms: this.rooms
       };
 
-      this.sendToClient( socket, msg );
+      this.emit("sendToClient", socket, msg);
+
+      break;
+
+    case 'room.create':
+      var roomId = this.getNextRoomId();
+      var room  = new ChatRoom( roomId, data.name, data.type, this, socket );
+      this.addRoom( room );
+
+      var msg = {
+        action: 'room.added',
+        id: roomId,
+        name: data.name,
+        type: data.type
+      };
+
+      this.emit("sendToClient", socket, msg);
 
       break;
   }
@@ -152,17 +188,22 @@ ChatServer.prototype.removeRoom = function( id ) {
 }
 
 /**
- * Add a Room to server
- * @param name
- * @param type
- * @returns {Number}
+ * Add a room to chatroom list
+ * @param room
  */
-ChatServer.prototype.addRoom = function( name, type ) {
-  var index = this.getNextRoomId();
+ChatServer.prototype.addRoom = function( room ) {
+  var count = 0;
+  for( var roomItem in this.rooms ) {
+    if( roomItem.name == room ) {
+      count++;
+    }
+  }
 
-  this.rooms[ index ] = new ChatRoom( index, name, type, this );
+  if( count > 0 ) {
+    room.name += " ("+count+")";
+  }
 
-  return index;
+  this.rooms[ room.id ] = room;
 }
 
 /**
@@ -203,7 +244,7 @@ ChatServer.prototype.addClient = function( webSocket ) {
       console.log("onMessage Exception: Invalid Message Format: " + raw);
 
       var msg = server.generateInfoMessage("error", 4000, "Invalid Message Format: " + raw);
-      server.sendToClient( this, msg );
+      server.emit("sendToClient", this, msg);
 
       return;
     } else {
@@ -258,7 +299,7 @@ ChatServer.prototype.sendToRoom = function( room, data, sender ) {
   for( var remotePort in room.clients ) {
     var ws = room.clients[ remotePort ];
     if( ws ) {
-      this.sendToClient( ws, data );
+      this.emit("sendToClient", ws, data);
     } else {
       room.removeClient( ws );
     }
